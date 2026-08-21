@@ -1,5 +1,5 @@
 import { Bot, GrammyError, type Context } from "grammy";
-import { generateReply, transcribeAudio } from "../ai/gemini";
+import { generateReply, transcribeAudio } from "../ai";
 import { buildSystemPrompt } from "../profile/voice";
 import { getContactContext } from "../profile/contacts";
 import { buildFactsContext } from "../profile/facts";

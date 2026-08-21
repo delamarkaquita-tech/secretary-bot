@@ -4,15 +4,24 @@ import {
   type GenerationConfig,
 } from "@google/generative-ai";
 import type { Message } from "../store/sessions";
+import { withRetry, sanitizeReply } from "./shared";
 
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) {
-  throw new Error("GEMINI_API_KEY is not set in the environment");
+const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+
+// The client is built on first use, not at import time: a fully-local install
+// (AI_PROVIDER=ollama) must be able to boot with no GEMINI_API_KEY at all.
+let client: GoogleGenerativeAI | undefined;
+
+function genAI(): GoogleGenerativeAI {
+  if (!client) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is not set in the environment");
+    }
+    client = new GoogleGenerativeAI(apiKey);
+  }
+  return client;
 }
-
-const genAI = new GoogleGenerativeAI(apiKey);
-
-const MODEL = "gemini-2.5-flash";
 
 /**
  * Generate a reply with Gemini 2.5 Flash.
@@ -28,7 +37,7 @@ export async function generateReply(
   history: Message[],
   userMessage: string,
 ): Promise<string> {
-  const model = genAI.getGenerativeModel({
+  const model = genAI().getGenerativeModel({
     model: MODEL,
     systemInstruction: systemPrompt,
   });
@@ -59,36 +68,12 @@ export async function generateReply(
   return text;
 }
 
-// Transient Gemini failures worth retrying: rate limits, overload, gateway/availability blips.
-const RETRYABLE = /\b(429|500|502|503|504)\b|overloaded|unavailable|timeout/i;
-
-/**
- * Retry a Gemini call on transient errors with exponential backoff + jitter.
- * Non-transient errors (e.g. bad API key, safety blocks) fail fast.
- */
-async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
-  let lastErr: unknown;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastErr = err;
-      const message = err instanceof Error ? err.message : String(err);
-      if (i === attempts - 1 || !RETRYABLE.test(message)) throw err;
-      const delayMs = 500 * 2 ** i + Math.random() * 250;
-      console.warn(`Gemini transient error (attempt ${i + 1}/${attempts}), retrying in ${Math.round(delayMs)}ms`);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-  throw lastErr;
-}
-
 /**
  * Transcribe an audio clip (e.g. a Telegram voice note) with Gemini's native audio support.
  * Returns the verbatim transcription in its original language, or "" if there's no speech.
  */
 export async function transcribeAudio(base64Audio: string, mimeType: string): Promise<string> {
-  const model = genAI.getGenerativeModel({
+  const model = genAI().getGenerativeModel({
     model: MODEL,
     generationConfig: {
       temperature: 0,
@@ -116,7 +101,7 @@ export async function transcribeAudio(base64Audio: string, mimeType: string): Pr
  * Forces JSON output and disables thinking. Returns the raw JSON string.
  */
 export async function generateJson(systemPrompt: string, userMessage: string): Promise<string> {
-  const model = genAI.getGenerativeModel({
+  const model = genAI().getGenerativeModel({
     model: MODEL,
     systemInstruction: systemPrompt,
     generationConfig: {
@@ -127,20 +112,4 @@ export async function generateJson(systemPrompt: string, userMessage: string): P
   });
   const result = await model.generateContent(userMessage);
   return result.response.text();
-}
-
-/**
- * Defensive cleanup in case the model still emits a reasoning preamble.
- * Strips leading labels like "THOUGHT:", "REASONING:", "FINAL ANSWER:".
- */
-function sanitizeReply(raw: string): string {
-  let text = raw.trim();
-  const labels = /^(thought|thinking|reasoning|analysis|final answer|answer|response)\s*:/i;
-  // Drop leading labeled lines until we hit real content.
-  const lines = text.split("\n");
-  while (lines.length > 0 && labels.test(lines[0]!.trim())) {
-    lines.shift();
-  }
-  text = lines.join("\n").trim();
-  return text;
 }

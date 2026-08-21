@@ -2,6 +2,7 @@ import "dotenv/config";
 import { Bot } from "grammy";
 import { registerBusinessHandlers } from "./handlers/business";
 import { registerDirectHandlers } from "./handlers/direct";
+import { reportProviders } from "./ai";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) {
@@ -25,6 +26,9 @@ bot.catch((err) => {
 async function main(): Promise<void> {
   // Long polling and webhooks are mutually exclusive — clear any stale webhook.
   await bot.api.deleteWebhook({ drop_pending_updates: false }).catch(() => undefined);
+
+  // Resolve and validate AI provider routing before we accept any traffic.
+  await reportProviders();
 
   console.log("Starting Secretary Mode bot…");
   await bot.start({

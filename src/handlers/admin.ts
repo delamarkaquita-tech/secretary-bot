@@ -1,5 +1,5 @@
 import { Context } from "grammy";
-import { generateJson } from "../ai/gemini";
+import { generateJson } from "../ai";
 import {
   upsertContact,
   deleteContact,
