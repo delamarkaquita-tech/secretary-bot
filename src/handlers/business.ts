@@ -38,6 +38,22 @@ function ownerContext(): string {
   return `Current date and time (${OWNER_TIMEZONE}): ${now}. Use this if asked about the time or date — do not guess.`;
 }
 
+/**
+ * The full per-message system prompt. Order matters: static persona/voice first,
+ * then facts, then the freshly-computed date/time and per-contact context.
+ * Exported so scripts/dry-run.ts previews the exact prompt production uses.
+ */
+export function composeSystemPrompt(chatId: number, username?: string): string {
+  return [
+    COMPOSED_SYSTEM_PROMPT,
+    buildFactsContext(),
+    ownerContext(),
+    getContactContext(chatId, username),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 // Natural reply pacing. Real humans are bursty: usually quick (at the phone), but
 // occasionally away for minutes. We model a mostly-quick-but-sometimes-long *silent*
 // gap, then a short "typing…" burst right before sending.
