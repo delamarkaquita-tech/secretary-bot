@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | grep -qE '(^|/)(\\.env|contacts\\.json|facts\\.json|voice\\.json)$' && { echo 'Blocked: this file holds credentials or real personal data (chat transcripts, private facts). Use the committed *.example.json instead, or ask Doston to paste the specific snippet you need.' >&2; exit 2; }; exit 0"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | grep -q '/src/.*\\.ts$' && { cd \"$CLAUDE_PROJECT_DIR\" && npm run typecheck 2>&1 >&2 || exit 2; }; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
