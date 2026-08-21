@@ -78,6 +78,16 @@ export function buildSystemPrompt(basePrompt: string): string {
     sections.push(renderExamples(profile.examples));
   }
 
+  // The examples above are the strongest signal in the prompt, so a weak model copies
+  // their *language* as well as their style — answering an Uzbek message in English
+  // because the samples happen to be English. Restating the rule after them (recency)
+  // measurably reduces that. Local models need this; Gemini mostly doesn't.
+  sections.push(
+    "LANGUAGE RULE — this overrides the examples above: reply in the SAME language the " +
+      "sender just used. The examples show tone and length only, never which language to " +
+      "use. If they write Uzbek, reply Uzbek; Russian, reply Russian; English, reply English.",
+  );
+
   sections.push(
     "Output ONLY the message you would send — no preamble, no explanations, no reasoning, " +
       "and never a label like 'THOUGHT:' or 'Answer:'. Just the message text, exactly as you'd type it.",
