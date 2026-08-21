@@ -10,9 +10,14 @@ npm run dev          # run from source via ts-node (no build)
 npm run typecheck    # tsc --noEmit — the only "test" gate; run after edits
 npm run build        # compile src/ -> dist/
 npm start            # run compiled dist/index.js (used in production)
+
+npx ts-node scripts/transcribe-test.ts ./clip.ogg [audio/ogg]   # manual voice-transcription check
+npx ts-node scripts/dry-run.ts "salom" --compare gemma3:12b,mistral-nemo:12b -n 3   # preview replies, no Telegram
 ```
 
-There is **no test suite**. `npm run typecheck` is the correctness gate — `tsconfig.json` runs in `strict` mode with `noUncheckedIndexedAccess`, so optional/undefined narrowing is enforced. Production runs the compiled output under pm2 (`ecosystem.config.js`).
+There is **no test suite and no linter**. `npm run typecheck` is the correctness gate — `tsconfig.json` runs in `strict` mode with `noUncheckedIndexedAccess`, so optional/undefined narrowing is enforced. CI (`.github/workflows/ci.yml`) runs exactly `npm run typecheck` + `npm run build` on Node 18 and 20; matching those locally is matching CI. Production runs the compiled output under pm2 (`ecosystem.config.js`).
+
+`scripts/` is **outside** tsconfig's `include` (`src/**/*` only), so nothing there is typechecked or compiled — `scripts/transcribe-test.ts` is verified only by running it under `ts-node`. It's the way to sanity-check Gemini's Uzbek/Russian transcription against a saved `.ogg` without going through Telegram.
 
 ## What this is
 
@@ -27,6 +32,12 @@ A Telegram **Secretary Mode** (Business Mode) bot: when someone messages the *ow
 Business messages arrive as `business_message` updates and **never** trigger the `message` handler, so the two handlers don't overlap.
 
 **`allowed_updates` is load-bearing.** Telegram does *not* deliver `business_*` updates unless they're explicitly listed in `bot.start({ allowed_updates: [...] })` in `src/index.ts`. Dropping them there silently breaks the entire bot with no error.
+
+**Startup order and `process.cwd()` are also load-bearing.** Every module reads its config at *import* time — `OWNER_USER_ID`/`SYSTEM_PROMPT`/`NATURAL_TYPING` are captured into module-level consts, and `src/ai/gemini.ts` *throws* on import when `GEMINI_API_KEY` is missing. That only works because `import "dotenv/config"` is the **first** import in `src/index.ts`; reordering it (or an import sorter doing it for you) leaves every one of those consts undefined with no error. Any new entry point must import it first too — `scripts/transcribe-test.ts` does.
+
+Likewise, `voice.json` / `contacts.json` / `facts.json` are resolved against `process.cwd()`, **not** `__dirname` — both when read and when written back. The process must be started from the repo root (which is why the pm2 recipe is `pm2 start ecosystem.config.js` from the project directory); starting it elsewhere silently loads no profile and then writes new state files into that directory.
+
+**The `*.example.json` fallback gets promoted on first write.** If the real file is absent, the loader falls back to the committed example — but `persist()` always writes to the *real* path. So the first `upsertContact`/`addFact` in a fresh checkout materializes `contacts.json`/`facts.json` seeded with the example data. Copy the templates deliberately (`cp contacts.example.json contacts.json`) rather than letting a chat command do it.
 
 **Reply flow** (`business_message` handler):
 1. Skip if no `business_connection_id`, or sender is the owner (`from.id === OWNER_USER_ID`) — prevents the bot replying to itself. Owner-skip happens **before** any transcription so we don't spend a Gemini call on the owner's own voice notes.
@@ -52,7 +63,17 @@ Because facts are editable at runtime, `buildFactsContext()` is called **per mes
 
 The full per-message system prompt order is: `COMPOSED_SYSTEM_PROMPT + FACTS_CONTEXT + ownerContext() + getContactContext(...)`. The first two are static (built once at startup); `ownerContext()` (fresh date/time) and the contact lookup are recomputed per message.
 
-**Gemini wrapper** (`src/ai/gemini.ts`): `generateReply()` calls 2.5 Flash with **thinking disabled** (`thinkingConfig: { thinkingBudget: 0 }`) so its chain-of-thought can't leak into the sent message, plus `sanitizeReply()` strips any leftover `THOUGHT:`/`Answer:`-style preambles as a backstop. The voice prompt also carries a "message only" guardrail. All three exist because the model otherwise sometimes emits its reasoning as the reply text.
+**Provider routing** (`src/ai/index.ts`): the three AI jobs are selected *independently* — `chat` (replies a real person reads), `admin` (parsing the owner's DM into JSON), `transcribe` (voice notes). `AI_PROVIDER` sets all three; `AI_PROVIDER_CHAT`/`_ADMIN`/`_TRANSCRIBE` override individually. Default is `gemini` everywhere, so an existing `.env` is unaffected.
+
+The split isn't hypothetical — it was measured on a 12GB RTX 3080 Ti. Local 12–14B models are **excellent** at `admin` (Ollama's `format: "json"` constrains decoding, so parses are near-perfect) and **not shippable** for `chat` in Uzbek, where they emit grammatically broken text that would go out under the owner's name. They also lose language-matching: weak models over-index on `voice.json`'s few-shot examples and reply in *that* language regardless of the sender's. Measure with `scripts/dry-run.ts` and **always `-n 3`+** — replies are sampled at 0.85, and during development one lucky first sample made a model look far better than it was.
+
+`src/ai/ollama.ts` uses Ollama's **native `/api/chat`**, not its OpenAI-compatible shim, for three things the shim doesn't expose: `think: false` (suppresses `<think>` on reasoning models), `format: "json"` (the admin parser's reliability), and `keep_alive` (a cold model load is 5–15s, which would blow through the natural-pacing gap). Sessions store Gemini's roles (`user`/`model`), so the adapter maps `model` → `assistant` at the boundary — the store stays Gemini-flavoured on purpose.
+
+**Ollama cannot transcribe audio** (text/vision models only). Fully-local voice notes need a separate whisper server on the OpenAI-compatible `/v1/audio/transcriptions` endpoint (`src/ai/whisper.ts`); otherwise route `transcribe` to Gemini. Setting `AI_PROVIDER_TRANSCRIBE=ollama` warns at startup and fails loudly per voice note rather than silently dropping them.
+
+**The Gemini API key check is lazy** (built on first use in `genAI()`, not at import) so a fully-local install boots with no key. `reportProviders()` warns at startup if a Gemini path is selected without one — that warning is the only thing replacing the old import-time throw.
+
+**Gemini wrapper** (`src/ai/gemini.ts`): `generateReply()` calls 2.5 Flash with **thinking disabled** (`thinkingConfig: { thinkingBudget: 0 }`) so its chain-of-thought can't leak into the sent message, plus `sanitizeReply()` (now in `src/ai/shared.ts`, used by every provider) strips leftover `THOUGHT:`/`Answer:` preambles **and `<think>…</think>` blocks** — the latter is how local reasoning models (qwen3, DeepSeek-R1 distills) emit chain-of-thought; `think: false` covers models that honour the flag, and the regex covers the rest. The voice prompt also carries a "message only" guardrail. All three exist because the model otherwise sometimes emits its reasoning as the reply text.
 
 **Session store** (`src/store/sessions.ts`): in-memory `Map` keyed by `` `${business_connection_id}:${chat_id}` ``, capped at 40 entries (20 pairs). Roles use Gemini's convention — `"user"` (incoming) / `"model"` (our reply), *not* OpenAI's `assistant`. History must start with a `user` turn; the append order (user then model) guarantees this. **Memory is process-local and wiped on restart** — swap for Redis/SQLite if persistence is needed.
 
@@ -63,5 +84,7 @@ The full per-message system prompt order is: `COMPOSED_SYSTEM_PROMPT + FACTS_CON
 ## Gotchas
 
 - **`@google/generative-ai` is deprecated** in favor of `@google/genai`. It still works with `gemini-2.5-flash`; if you touch `src/ai/gemini.ts`, consider migrating. Note `thinkingConfig` isn't in this SDK's types — it's passed via an `as unknown as GenerationConfig` cast and only honored by the REST API. The newer SDK types it properly.
+- **Prompt composition lives in `composeSystemPrompt()`** (exported from `business.ts`) so `scripts/dry-run.ts` exercises the real production prompt rather than a drifting copy. Keep them from diverging — the harness is worthless if it tests a different prompt.
+- **`withRetry`/`sanitizeReply` moved to `src/ai/shared.ts`.** Its retry regex also matches Ollama's cold-load failures (`EOF`, `fetch failed`).
 - **Text and voice notes** are handled; other media (photos, stickers, video notes) are ignored in the `business_message` handler. Extend there to support them. Voice replies (TTS) are not implemented — replies to voice notes go out as text.
 - Long polling means **one instance per token** — running two concurrently conflicts.

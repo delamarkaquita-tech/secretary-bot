@@ -31,6 +31,7 @@ Secretary Bot uses Telegram's [Business Mode](https://core.telegram.org/bots#bus
 - ⌨️ **Human pacing** — bursty, bimodal timing: usually replies in seconds, but occasionally goes quiet for a minute or two like someone who stepped away, then a short "typing…" burst right before sending. Momentum-aware (rapid back-and-forth stays snappy).
 - 🎙️ **Voice notes** — transcribes incoming voice messages (Uzbek/Russian/English, kept verbatim) and replies to them like any text.
 - 🌍 **Language-matching** — replies in whatever language the sender writes in.
+- 🏠 **Local or cloud** — run on Gemini, or fully offline on a local model via Ollama, or mix the two per job.
 - 💬 **Per-chat memory** — keeps the last 20 message pairs of context for each conversation.
 - ⏰ **Time-aware** — grounded with your real local date/time, so it never fabricates "what time is it?"
 - 🔇 **No leaked reasoning** — Gemini's internal thinking is disabled and sanitized so only the final message is sent.
@@ -104,11 +105,99 @@ All configuration lives in `.env` (see [`.env.example`](.env.example)):
 | Variable | Required | Description |
 |---|:---:|---|
 | `TELEGRAM_BOT_TOKEN` | ✅ | Bot token from BotFather |
-| `GEMINI_API_KEY` | ✅ | Google Gemini API key |
+| `GEMINI_API_KEY` | ✅* | Google Gemini API key. *Not required if every job is routed to a local provider |
 | `OWNER_USER_ID` | ✅ | Your numeric Telegram ID ([@userinfobot](https://t.me/userinfobot)) — used to notify you and to ignore your own messages |
 | `SYSTEM_PROMPT` | ✅ | Base persona / instructions for the model |
 | `OWNER_TIMEZONE` | — | IANA timezone for date/time grounding (default `Asia/Tashkent`) |
 | `NATURAL_TYPING` | — | Show "typing…" and delay replies to feel human; `false` to reply instantly (default `true`) |
+| `AI_PROVIDER` | — | `gemini` (default) or `ollama`. Sets all three jobs at once |
+| `AI_PROVIDER_CHAT` / `_ADMIN` / `_TRANSCRIBE` | — | Override the provider per job — see [Model providers](#model-providers) |
+| `GEMINI_MODEL` | — | Default `gemini-2.5-flash` |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | — | Default `http://localhost:11434` / `gemma3:12b` |
+| `OLLAMA_NUM_CTX` / `OLLAMA_KEEP_ALIVE` | — | Default `8192` / `30m` |
+| `WHISPER_BASE_URL` / `WHISPER_MODEL` / `WHISPER_LANGUAGE` | — | Local speech-to-text, only for `AI_PROVIDER_TRANSCRIBE=whisper` |
+
+## Model providers
+
+The bot runs on **Google Gemini** (cloud) by default, or a **local model via [Ollama](https://ollama.com)** — with no API key, no per-message cost, and no message ever leaving your machine.
+
+Local support is opt-in and backwards-compatible: an existing `.env` with none of these variables set behaves exactly as it always did.
+
+### Three jobs, chosen independently
+
+The bot asks a model to do three different things, and local models are *not* equally good at all three. So each is routed separately:
+
+| Job | What it does | Local viability |
+|---|---|---|
+| `chat` | The replies real people receive, sent as you | **Weakest.** Fine in English; unreliable in low-resource languages |
+| `admin` | Parses your own DM commands into JSON | **Excellent.** Ollama constrains decoding with `format: "json"` |
+| `transcribe` | Voice notes → text | **Not possible in Ollama** — needs whisper (see below) |
+
+`AI_PROVIDER` sets all three; `AI_PROVIDER_CHAT`, `AI_PROVIDER_ADMIN` and `AI_PROVIDER_TRANSCRIBE` override individually. That is what makes the useful hybrid possible:
+
+```env
+# Gemini writes the replies people actually read;
+# the local model handles your admin commands for free.
+AI_PROVIDER=gemini
+AI_PROVIDER_ADMIN=ollama
+```
+
+### Quick start — fully local
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh   # if you don't have it
+ollama pull gemma3:12b
+```
+
+```env
+AI_PROVIDER=ollama
+OLLAMA_MODEL=gemma3:12b
+AI_PROVIDER_TRANSCRIBE=whisper    # or =gemini, or drop voice-note support
+```
+
+Then check it before letting it near a real chat:
+
+```bash
+npx ts-node scripts/dry-run.ts "salom, qalesan?" -n 3
+```
+
+### Choosing a model
+
+Two things matter far more than benchmark scores: **your VRAM**, and **the languages you actually get messaged in**.
+
+| Model | Size | Notes |
+|---|---|---|
+| `gemma3:12b` | ~8 GB | **Recommended starting point.** Shares Gemini's 262k tokenizer and is trained for 140+ languages. Clearly the best of the four tested at Uzbek, and excellent at English |
+| `mistral-nemo:12b` | ~7 GB | Good casual English tone, fits comfortably in 12 GB VRAM |
+| `qwen2.5:14b` | ~9 GB | The most precise at `admin` JSON parsing (gemma3 mis-fills the `match` field when deleting facts); notably weaker at conversational non-English |
+| `gemma3:27b` / `qwen2.5:32b` | 17 GB+ | Noticeably better, but needs 24 GB+ VRAM to stay on the GPU |
+
+> **Fit the model in VRAM.** On a 12 GB card a ~9 GB model spills to CPU and slows to a crawl, while a ~7–8 GB one stays fully resident. `ollama ps` shows the CPU/GPU split. `OLLAMA_KEEP_ALIVE` keeps it loaded between messages — a cold load costs 5–15s, enough to blow through the natural-pacing gap.
+
+### ⚠️ Honest limitations of local chat
+
+Measured on a 12 GB RTX 3080 Ti, not extrapolated from benchmarks:
+
+- **Low-resource languages are the real ceiling.** For Uzbek, 12–14B models produced grammatically broken output that no owner would want sent under their own name. Gemini handled the same prompts cleanly. If you're messaged in a low-resource language, **keep `chat` on Gemini** and route only `admin` locally.
+- **Language matching degrades.** Small models over-index on the few-shot examples in `voice.json` and reply in *that* language regardless of what the sender wrote — e.g. answering a Russian message in Uzbek. Adding an explicit language directive helps but does not fix it.
+- **Test with `-n 3` or more.** Replies are sampled at temperature 0.85. During development a single lucky sample made a model look far better than repeated runs showed it to be.
+- **Reasoning models leak.** Qwen3 and DeepSeek-R1 distills emit `<think>` blocks. The bot sets `think: false` and strips the tags in `sanitizeReply()`, but a non-reasoning model is one less thing to go wrong.
+
+English-only? Local is genuinely viable. Otherwise treat it as a cost-saver for `admin`, not a drop-in replacement for `chat`.
+
+### Voice notes on a local stack
+
+Ollama serves text and vision models only — it has **no** speech-to-text. For fully-local voice notes, run any server exposing the OpenAI-compatible `/v1/audio/transcriptions` endpoint ([whisper.cpp](https://github.com/ggerganov/whisper.cpp), [faster-whisper-server](https://github.com/fedirz/faster-whisper-server), [Speaches](https://github.com/speaches-ai/speaches), LocalAI):
+
+```env
+AI_PROVIDER_TRANSCRIBE=whisper
+WHISPER_BASE_URL=http://localhost:8080/v1
+WHISPER_MODEL=whisper-1
+WHISPER_LANGUAGE=uz      # optional; pinning helps a lot on short clips
+```
+
+Set `AI_PROVIDER_TRANSCRIBE=gemini` to keep cloud transcription while everything else stays local. If it's left on `ollama`, the bot warns at startup and voice notes fail loudly rather than being silently dropped.
+
 
 ## Production
 
@@ -129,6 +218,8 @@ pm2 logs secretary-bot
 | `npm run typecheck` | Type-check without emitting (`tsc --noEmit`) |
 | `npm run build` | Compile `src/` → `dist/` |
 | `npm start` | Run the compiled build |
+| `npx ts-node scripts/dry-run.ts "<msg>"` | Preview a reply without Telegram — see [Model providers](#model-providers) |
+| `npx ts-node scripts/transcribe-test.ts <audio>` | Check voice transcription against a local file |
 
 ## Project structure
 
@@ -140,7 +231,11 @@ src/
 │   ├── direct.ts         # routes owner DMs to admin; canned reply for everyone else
 │   └── admin.ts          # owner control panel — manage contacts by chatting with the bot
 ├── ai/
-│   └── gemini.ts         # Gemini 2.5 Flash wrapper
+│   ├── index.ts          # provider routing (chat / admin / transcribe)
+│   ├── gemini.ts         # Gemini API backend
+│   ├── ollama.ts         # local backend via Ollama /api/chat
+│   ├── whisper.ts        # local speech-to-text (/v1/audio/transcriptions)
+│   └── shared.ts         # retry + reasoning-leak sanitiser
 ├── profile/
 │   ├── voice.ts          # persona + style + voice examples → system prompt
 │   ├── contacts.ts       # per-sender tone & rules lookup (by chat_id / @username)
@@ -155,6 +250,7 @@ src/
 - **Text & voice** — text messages and voice notes (transcribed via Gemini) are handled; other media (photos, stickers, video notes) are currently ignored.
 - **Single instance** — long polling does not support multiple instances on the same token.
 - **SDK** — uses the now-deprecated `@google/generative-ai`; migration to `@google/genai` is planned.
+- **Local chat quality** — local models are markedly weaker at low-resource languages; see [honest limitations](#️-honest-limitations-of-local-chat).
 
 ## Roadmap
 
@@ -162,6 +258,7 @@ src/
 - [x] Per-contact awareness (tone & rules per sender)
 - [x] A personal facts / FAQ knowledge base
 - [x] Interactive owner control — manage contacts by DMing the bot
+- [x] Local model support (Ollama + whisper)
 - [ ] Draft-approval mode for important contacts
 
 ## Contributing
