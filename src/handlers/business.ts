@@ -88,17 +88,25 @@ function typingMs(reply: string): number {
   return Math.min(Math.max(reply.length * 45, 1500), 8000);
 }
 
-/** Keep the "typing…" indicator alive for `ms` (Telegram clears it after ~5s). */
-async function showTyping(ctx: Context, chatId: number, bizConnId: string, ms: number): Promise<void> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    try {
-      await ctx.api.sendChatAction(chatId, "typing", { business_connection_id: bizConnId });
-    } catch {
-      // best-effort — never let a typing blip stop the actual reply
+/**
+ * Start the "typing…" indicator and keep it alive until stopped. Telegram clears the
+ * indicator after ~5s, so it has to be re-sent on a timer. Runs detached so the caller
+ * can generate a reply while it ticks — the indicator must be visible *during*
+ * generation, which is the whole point of showing it.
+ */
+function startTyping(ctx: Context, chatId: number, bizConnId: string): { stop: () => void } {
+  let active = true;
+  void (async () => {
+    while (active) {
+      try {
+        await ctx.api.sendChatAction(chatId, "typing", { business_connection_id: bizConnId });
+      } catch {
+        // best-effort — never let a typing blip stop the actual reply
+      }
+      await sleep(4000);
     }
-    await sleep(Math.min(4000, end - Date.now()));
-  }
+  })();
+  return { stop: () => { active = false; } };
 }
 
 /** What we remember about an active business connection. */
@@ -230,35 +238,40 @@ export function registerBusinessHandlers(bot: Bot): void {
     const key = sessionKey(bizConnId, chatId);
     const history = getHistory(key);
 
-    const startedAt = Date.now();
+    // Human pacing, in the order a person actually does it:
+    //   1. a silent gap — you're away from the phone, so nothing is shown;
+    //   2. you pick it up and start typing — the indicator goes on HERE and stays on
+    //      while the model generates, so slow models still look like someone thumbing
+    //      out a message rather than a dead chat;
+    //   3. the reply lands.
+    if (NATURAL_TYPING) {
+      const gap = decideGapMs(key);
+      if (gap > 0) await sleep(gap);
+    }
+
+    const typing = NATURAL_TYPING ? startTyping(ctx, chatId, bizConnId) : null;
+    const genStartedAt = Date.now();
+
     let reply: string;
     try {
-      const systemPrompt = [
-        COMPOSED_SYSTEM_PROMPT,
-        buildFactsContext(),
-        ownerContext(),
-        getContactContext(chatId, msg.from?.username),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-      reply = await generateReply(systemPrompt, history, text);
+      reply = await generateReply(composeSystemPrompt(chatId, msg.from?.username), history, text);
     } catch (err) {
-      console.error(`Gemini error for chat ${chatId}:`, err);
+      typing?.stop();
+      console.error(`Model error for chat ${chatId}:`, err);
       await notifyOwner(
         ctx,
-        `⚠️ Gemini failed to answer chat ${chatId}: ${(err as Error).message}`,
+        `⚠️ The model failed to answer chat ${chatId}: ${(err as Error).message}`,
       );
       // Do NOT send a broken/placeholder reply — stay silent.
       return;
     }
 
-    // Human pacing: a mostly-quick but sometimes long *silent* gap (you're "away" —
-    // no typing shown), then a short typing burst right before sending. Gemini's own
-    // latency counts toward the gap.
-    if (NATURAL_TYPING) {
-      const gap = decideGapMs(key) - (Date.now() - startedAt);
-      if (gap > 0) await sleep(gap);
-      await showTyping(ctx, chatId, bizConnId, typingMs(reply));
+    // A fast model would otherwise reply instantly, which reads as a bot. Hold the
+    // indicator until the message has been "typed" for a length-proportional time.
+    if (typing) {
+      const remaining = typingMs(reply) - (Date.now() - genStartedAt);
+      if (remaining > 0) await sleep(remaining);
+      typing.stop();
     }
 
     try {
