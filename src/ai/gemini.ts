@@ -6,7 +6,7 @@ import {
 import type { Message } from "../store/sessions";
 import { withRetry, sanitizeReply } from "./shared";
 
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const MODEL = process.env.GEMINI_MODEL ?? "gemini-3.8-flash";
 
 // The client is built on first use, not at import time: a fully-local install
 // (AI_PROVIDER=ollama) must be able to boot with no GEMINI_API_KEY at all.
