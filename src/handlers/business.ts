@@ -252,8 +252,6 @@ if (!text && msg.photo) {
 }
 
 if (!text) return; // ignore other media (photos, stickers, …) for now
-
-    const key = sessionKey(bizConnId, chatId);
     const history = getHistory(key);
 
     // Human pacing, in the order a person actually does it:
@@ -278,6 +276,8 @@ const message = text
   .trim();
 
 let stage = conversationStage.get(key) ?? 0;
+    const ageMatch = message.match(/\b(\d{1,2})\s*(?:años?|anos)?\b/);
+const age = ageMatch ? Number(ageMatch[1]) : null;
 
 const affirmative =
   /\b(si|claro|dale|ok|oki|sip|vale|bueno|acepto|de una|me interesa|quiero empezar|cuentame)\b/.test(message);
@@ -290,8 +290,21 @@ const asksAboutJob =
 
 const saysFinished =
   /\b(termine|listo|lista|ya lo hice|ya los hice|completado|complete|aqui esta|aqui estan)\b/.test(message);
-
-if (stage === 0) {
+if (stage === 5 && age !== null) {
+  if (age < 18) {
+    reply =
+      "¡Gracias por contarme! 💗 Por ahora, esta oportunidad está dirigida a personas mayores de edad. Te agradezco mucho tu interés.";
+  } else if (age <= 99) {
+    reply =
+      "¡Gracias por confirmarme tu edad! 💗 Para continuar, verifica las condiciones de la oferta y los datos de la empresa responsable antes de compartir información personal o realizar tareas.";
+  } else {
+    reply =
+      "¿Me confirmas tu edad, por favor? 😊 Puedes escribirme tu edad en años.";
+  }
+} else if (stage === 5) {
+  reply =
+    "¡Gracias por la captura! 💗 Para continuar, ¿cuántos años tienes? Puedes responder, por ejemplo, «19 años».";
+} else if (stage === 0) {
   reply =
     "¡Hola! Soy Chrysalis 💗✨ Te escribo para contarte sobre una oportunidad de trabajo a tiempo parcial relacionada con productos de SHEIN. ¿Te gustaría conocer cómo funciona?";
   conversationStage.set(key, 1);
