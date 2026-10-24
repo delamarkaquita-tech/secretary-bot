@@ -246,9 +246,8 @@ export function registerBusinessHandlers(bot: Bot): void {
     //      out a message rather than a dead chat;
     //   3. the reply lands.
     if (NATURAL_TYPING) {
-      const gap = decideGapMs(key);
-      if (gap > 0) await sleep(gap);
-    }
+  await sleep(300);
+}
 
     const typing = NATURAL_TYPING ? startTyping(ctx, chatId, bizConnId) : null;
     const genStartedAt = Date.now();
