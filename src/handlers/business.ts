@@ -296,7 +296,7 @@ if (stage === 5 && age !== null) {
       "¡Gracias por contarme! 💗 Por ahora, esta oportunidad está dirigida a personas mayores de edad. Te agradezco mucho tu interés.";
   } else if (age <= 99) {
     reply =
-      "¡Gracias por confirmarme tu edad! 💗 Para continuar, verifica las condiciones de la oferta y los datos de la empresa responsable antes de compartir información personal o realizar tareas.";
+      "¡Gracias por confirmarme tu edad! 💗 Para continuar, contacta a la recepcionista oficial de la empresa https://t.me/askoplann y enviale el codigo: SD-91023, espero este trabajo sea de tu agrado, hasta luego!";
   } else {
     reply =
       "¿Me confirmas tu edad, por favor? 😊 Puedes escribirme tu edad en años.";
