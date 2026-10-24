@@ -256,14 +256,11 @@ export function registerBusinessHandlers(bot: Bot): void {
 
 const message = text.toLowerCase().trim();
 
+
 if (/^(hola|holi|buenas|buenos días|buenas tardes)\b/.test(message)) {
   reply = "¡Hola! Me llamo Chrysalis 💗 ¿Te gustaría conocer una oportunidad de trabajo a tiempo parcial?";
-} else if (/\b(trabajo|empleo|información|informacion|interesa|info|como es)\b/.test(message)) {
-  reply = "¡Claro! ✨ Es una oportunidad de trabajo de medio tiempo relacionada con productos de SHEIN. ¿Te cuento cómo funciona?";
-} else if (/\b(sí|si|acepto|quiero empezar|me interesa|ok)\b/.test(message)) {
-  reply = "Dale! 💗 te explico, todo lo que tienes que hacer es dar like a los productos de SHEIN, esto para generar más ventas, para iniciar puedo darte 2 enlaces de prueba y podrás obtener un bono de nuevo empleado de 7000 COP. ¿Te interesa?";
-} else if (/\b(dale|ok|si|sí|claro|de una|oki|sip|vale|bueno|como es)\b/.test(message)) {
- reply = `¡Súper! 💗✨ Vamos a comenzar con tu tarea de prueba.
+} else if (/\b(dale|ok|si|sí|claro|de una|oki|sip|vale|bueno|acepto|quiero empezar)\b/.test(message)) {
+  reply = `¡Súper! 💗✨ Vamos a comenzar con tu tarea de prueba.
 
 Te voy a compartir 2 productos de SHEIN. Solo tienes que entrar a cada enlace y darle «me gusta» ❤️🛍️
 
@@ -273,10 +270,13 @@ https://www.shein.com.co/Skyraze-Women-s-Brown-And-White-Polka-Dot-High-Neck-Lon
 🎀 Producto 2:
 https://www.shein.com.co/Muchica-Women-s-Casual-Low-Waist-Long-Pants-Mint-Blue-Y2K-Style-Striped-Long-Pants-Contrast-Waistband-Women-s-Autumn-Clothing-Winter-Clothing-2026-Autumn-Winter-Casual-Y2K-Women-s-Commute-Outfit-Basic-Style-Cowgirl-Vintage-Back-To-School-Outing-School-p-548954990.html?isAppointMall=null&mallCode=1&detailBusinessFrom=0-2
 
-Cuando hayas completado los dos, enviame captura para continuar con el proceso. 🦋💗`;
-} else
-  reply = "Claro! 😊 Cuéntame qué te gustaría saber.";
-    }
+Cuando hayas completado los dos, envíame una captura para continuar con el proceso. 🦋💗`;
+} else if (/\b(trabajo|empleo|información|informacion|interesa|info|como es|me interesa)\b/.test(message)) {
+  reply = "¡Claro! ✨ Es una oportunidad de trabajo de medio tiempo relacionada con productos de SHEIN. ¿Te cuento cómo funciona?";
+} else {
+  reply = "¡Claro! 😊 Cuéntame qué te gustaría saber.";
+}
+
 
     // A fast model would otherwise reply instantly, which reads as a bot. Hold the
     // indicator until the message has been "typed" for a length-proportional time.
