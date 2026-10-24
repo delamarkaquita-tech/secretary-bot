@@ -234,7 +234,24 @@ export function registerBusinessHandlers(bot: Bot): void {
         return;
       }
     }
-    if (!text) return; // ignore other media (photos, stickers, …) for now
+    const key = sessionKey(bizConnId, chatId);
+
+if (!text && msg.photo) {
+  const stage = conversationStage.get(key) ?? 0;
+
+  if (stage >= 4) {
+    await ctx.api.sendMessage(
+      chatId,
+      "¡Gracias por la captura! 💗 ¿Cuántos años tienes?",
+      { business_connection_id: bizConnId },
+    );
+    conversationStage.set(key, 5);
+  }
+
+  return;
+}
+
+if (!text) return; // ignore other media (photos, stickers, …) for now
 
     const key = sessionKey(bizConnId, chatId);
     const history = getHistory(key);
