@@ -193,6 +193,7 @@ export function registerBusinessHandlers(bot: Bot): void {
   });
 
   // 2. Incoming message in a managed chat — the core auto-responder.
+  const conversationStage = new Map<string, number>();
   bot.on("business_message", async (ctx) => {
     const msg = ctx.update.business_message;
     if (!msg) return;
@@ -252,17 +253,59 @@ export function registerBusinessHandlers(bot: Bot): void {
     const typing = NATURAL_TYPING ? startTyping(ctx, chatId, bizConnId) : null;
     const genStartedAt = Date.now();
 
-    let reply: string;
+let reply: string;
 
-const message = text.toLowerCase().trim();
+const message = text
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .trim();
 
+let stage = conversationStage.get(key) ?? 0;
 
-if (/^(hola|holi|buenas|buenos días|buenas tardes)\b/.test(message)) {
-  reply = "¡Hola! Me llamo Chrysalis 💗 ¿Te gustaría conocer una oportunidad de trabajo a tiempo parcial?";
-} else if (/\b(dale|ok|si|sí|claro|de una|oki|sip|vale|bueno|acepto|quiero empezar)\b/.test(message)) {
-  reply = `¡Súper! 💗✨ Vamos a comenzar con tu tarea de prueba.
+const affirmative =
+  /\b(si|claro|dale|ok|oki|sip|vale|bueno|acepto|de una|me interesa|quiero empezar|cuentame)\b/.test(message);
 
-Te voy a compartir 2 productos de SHEIN. Solo tienes que entrar a cada enlace y darle «me gusta» ❤️🛍️
+const greeting =
+  /^(hola|holi|buenas|buenos dias|buenas tardes|buenas noches)\b/.test(message);
+
+const asksAboutJob =
+  /\b(trabajo|empleo|informacion|interesa|info|oportunidad|salario|pago|ganar|funciona)\b/.test(message);
+
+const saysFinished =
+  /\b(termine|listo|lista|ya lo hice|ya los hice|completado|complete|aqui esta|aqui estan)\b/.test(message);
+
+if (stage === 0) {
+  reply =
+    "¡Hola! Soy Chrysalis 💗✨ Te escribo para contarte sobre una oportunidad de trabajo a tiempo parcial relacionada con productos de SHEIN. ¿Te gustaría conocer cómo funciona?";
+  conversationStage.set(key, 1);
+
+} else if (stage === 1) {
+  if (affirmative || asksAboutJob) {
+    reply =
+      "¡Claro! 💗 La propuesta consiste en realizar pequeñas tareas relacionadas con productos de SHEIN. La remuneración anunciada es de $300.000 a $600.000 COP diarios, según las condiciones de la oferta. ¿Quieres que te explique la tarea de prueba?";
+    conversationStage.set(key, 2);
+  } else if (greeting) {
+    reply =
+      "¡Hola de nuevo! 💗 ¿Te gustaría conocer cómo funciona la oportunidad de trabajo?";
+  } else {
+    reply =
+      "¡Con gusto te cuento! 😊 ¿Te gustaría conocer los detalles de la oportunidad de trabajo a tiempo parcial?";
+  }
+
+} else if (stage === 2) {
+  if (affirmative) {
+    reply =
+      "¡Súper! 🦋 La tarea de prueba consiste en abrir dos productos y darles «me gusta» ❤️. ¿Quieres que te envíe los enlaces para realizarla?";
+    conversationStage.set(key, 3);
+  } else {
+    reply =
+      "No hay problema 😊. Si quieres, puedo explicarte cómo funciona la propuesta y la tarea de prueba.";
+  }
+
+} else if (stage === 3) {
+  if (affirmative) {
+    reply = `¡Perfecto! 💗✨ Estos son los dos productos para la tarea de prueba:
 
 🎀 Producto 1:
 https://www.shein.com.co/Skyraze-Women-s-Brown-And-White-Polka-Dot-High-Neck-Long-Knit-Dress-Dinner-Party-Summer-Vintage-Elegant-p-537281008.html?isAppointMall=null&mallCode=1&detailBusinessFrom=0-2
@@ -270,11 +313,24 @@ https://www.shein.com.co/Skyraze-Women-s-Brown-And-White-Polka-Dot-High-Neck-Lon
 🎀 Producto 2:
 https://www.shein.com.co/Muchica-Women-s-Casual-Low-Waist-Long-Pants-Mint-Blue-Y2K-Style-Striped-Long-Pants-Contrast-Waistband-Women-s-Autumn-Clothing-Winter-Clothing-2026-Autumn-Winter-Casual-Y2K-Women-s-Commute-Outfit-Basic-Style-Cowgirl-Vintage-Back-To-School-Outing-School-p-548954990.html?isAppointMall=null&mallCode=1&detailBusinessFrom=0-2
 
-Cuando hayas completado los dos, envíame una captura para continuar con el proceso. 🦋💗`;
-} else if (/\b(trabajo|empleo|información|informacion|interesa|info|como es|me interesa)\b/.test(message)) {
-  reply = "¡Claro! ✨ Es una oportunidad de trabajo de medio tiempo relacionada con productos de SHEIN. ¿Te cuento cómo funciona?";
+Cuando termines, cuéntame por aquí para indicarte el siguiente paso. 🦋`;
+    conversationStage.set(key, 4);
+  } else {
+    reply =
+      "¿Quieres que te comparta los dos enlaces para realizar la tarea de prueba? 💗";
+  }
+
 } else {
-  reply = "¡Claro! 😊 Cuéntame qué te gustaría saber.";
+  if (saysFinished) {
+    reply =
+      "¡Gracias por avisarme! 💗✨ Recibí tu mensaje. Te indicaré el siguiente paso cuando corresponda.";
+  } else if (asksAboutJob) {
+    reply =
+      "¡Claro! 😊 La propuesta está relacionada con tareas sobre productos. ¿Qué detalle te gustaría conocer: las tareas, los requisitos o la remuneración anunciada?";
+  } else {
+    reply =
+      "¡Aquí estoy! 💗 Cuéntame si ya completaste la tarea o qué duda tienes, y te ayudo.";
+  }
 }
 
 
