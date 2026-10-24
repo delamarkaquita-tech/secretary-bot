@@ -336,10 +336,9 @@ Cuando termines, cuéntame por aquí para indicarte el siguiente paso. 🦋`;
     // A fast model would otherwise reply instantly, which reads as a bot. Hold the
     // indicator until the message has been "typed" for a length-proportional time.
     if (typing) {
-      const remaining = typingMs(reply) - (Date.now() - genStartedAt);
-      if (remaining > 0) await sleep(remaining);
-      typing.stop();
-    }
+  typing.stop();
+}
+    
 
     try {
       await ctx.api.sendMessage(chatId, reply, {
